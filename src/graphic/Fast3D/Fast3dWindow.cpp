@@ -90,6 +90,10 @@ void Fast3dWindow::Init() {
     SetForceCursorVisibility(CVarGetInteger("gForceCursorVisibility", 0));
 
     InitWindowManager();
+    
+    // Poregon -- Initialize VR system
+    mInterpreter->vr_init();
+
     mInterpreter->Init(mWindowManagerApi, mRenderingApi, Ship::Context::GetInstance()->GetName().c_str(), isFullscreen,
                        width, height, posX, posY);
     mWindowManagerApi->SetFullscreenChangedCallback(OnFullscreenChanged);
@@ -118,6 +122,11 @@ uint16_t Fast3dWindow::GetPixelDepth(float x, float y) {
 void Fast3dWindow::InitWindowManager() {
     SetWindowBackend(Ship::Context::GetInstance()->GetConfig()->GetWindowBackend());
 
+    // Poregon -- OpenVR Only supports DX11 right now.
+    mWindowManagerApi = new GfxWindowBackendDXGI();
+    mRenderingApi = new GfxRenderingAPIDX11(static_cast<GfxWindowBackendDXGI*>(mWindowManagerApi));
+
+    /*
     switch (GetWindowBackend()) {
 #ifdef ENABLE_DX11
         case Ship::WindowBackend::FAST3D_DXGI_DX11:
@@ -141,6 +150,7 @@ void Fast3dWindow::InitWindowManager() {
             SPDLOG_ERROR("Could not load the correct rendering backend");
             break;
     }
+    */
 }
 
 void Fast3dWindow::SetTextureFilter(FilteringMode filteringMode) {
@@ -167,6 +177,23 @@ void Fast3dWindow::EndFrame() {
     mInterpreter->EndFrame();
 }
 
+// Poregon -- OpenVR Functions
+void Fast3dWindow::vr_init() {
+    mInterpreter->vr_init();
+}
+void Fast3dWindow::vr_get_poses() {
+    mInterpreter->vr_get_poses();
+};
+void Fast3dWindow::vr_update_view_matrix(int eye) {
+    mInterpreter->vr_update_view_matrix(eye);
+};
+void Fast3dWindow::vr_submit_framebuffers() {
+    mInterpreter->vr_submit_framebuffers();
+};
+// ID3D11Texture2D* Fast3dWindow::GetVRTextureForEye(int fbId) {
+//     mInterpreter->GetVRTextureForEye(fbId);
+// };
+
 bool Fast3dWindow::IsFrameReady() {
     return mWindowManagerApi->IsFrameReady();
 }
@@ -180,14 +207,28 @@ bool Fast3dWindow::DrawAndRunGraphicsCommands(Gfx* commands, const std::unordere
     }
 
     auto gui = wnd->GetGui();
-    // Setup of the backend frames and draw initial Window and GUI menus
-    gui->StartDraw();
-    // Setup game framebuffers to match available window space
-    mInterpreter->StartFrame();
-    // Execute the games gfx commands
-    mInterpreter->Run(commands, mtxReplacements);
-    // Renders the game frame buffer to the final window and finishes the GUI
-    gui->EndDraw();
+
+    // Poregon -- Update VR poses
+    mInterpreter->vr_get_poses();
+    // Poregon -- Render twice, once for each eye
+    for (int i = 0; i < 2; i++) {
+
+        // Setup of the backend frames and draw initial Window and GUI menus
+        gui->StartDraw();
+        // Setup game framebuffers to match available window space
+        mInterpreter->StartFrame();
+
+        // Poregon -- Update the view matrix for the current eye
+        mInterpreter->vr_update_view_matrix(i);
+
+        // Execute the games gfx commands
+        mInterpreter->Run(commands, mtxReplacements);
+        // Renders the game frame buffer to the final window and finishes the GUI
+        gui->EndDraw();
+    }
+    // Poregon -- Submit the VR framebuffers
+    vr_submit_framebuffers();
+
     // Finalize swap buffers
     mInterpreter->EndFrame();
 

@@ -24,6 +24,13 @@
 #include "libultraship/libultra/types.h"
 #include <string>
 
+// Poregon -- OpenVR and glm
+#include <openvr.h>
+#include <d3d11.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
 #include "interpreter.h"
 #include "lus_gbi.h"
 #include "backends/gfx_window_manager_api.h"
@@ -164,6 +171,20 @@ const char* Interpreter::CCMUXtoStr(uint32_t ccmux) {
     }
     return tbl[ccmux];
 }
+
+// Poregon -- Define VR System
+struct VRSystem {
+    vr::IVRSystem* system;
+    vr::IVRCompositor* compositor;
+    vr::IVRRenderModels* render_models;
+    vr::TrackedDevicePose_t tracked_device_poses[vr::k_unMaxTrackedDeviceCount];
+    vr::HmdMatrix34_t eye_positions[2];
+    float eye_view_matrices[2][4][4];
+    float eye_projection_matrices_converted[2][4][4];
+    bool initialized;
+    int current_eye;
+};
+static VRSystem vr_system = {};
 
 // Seems unused
 const char* Interpreter::ACMUXtoStr(uint32_t acmux) {
@@ -1093,11 +1114,23 @@ void Interpreter::GfxSpMatrix(uint8_t parameters, const int32_t* addr) {
     const int8_t mtx_push = get_attr(MTX_PUSH);
 
     if (parameters & mtx_projection) {
+        /*
         if (parameters & mtx_load) {
             memcpy(mRsp->P_matrix, matrix, sizeof(matrix));
         } else {
             MatrixMul(mRsp->P_matrix, matrix, mRsp->P_matrix);
         }
+        */
+
+        // Poregon VR Projection
+        if (vr_system.initialized) {
+            glm::mat4 projection = glm::make_mat4(&vr_system.eye_projection_matrices_converted[vr_system.current_eye][0][0]);
+            glm::mat4 view = glm::make_mat4(&vr_system.eye_view_matrices[vr_system.current_eye][0][0]);
+            glm::mat4 vp = projection * view;
+            memcpy(mRsp->P_matrix, glm::value_ptr(vp), sizeof(mRsp->P_matrix));
+        }
+        MatrixMul(mRsp->P_matrix, matrix, mRsp->P_matrix);
+
     } else { // G_MTX_MODELVIEW
         if ((parameters & mtx_push) && mRsp->modelview_matrix_stack_size < 11) {
             ++mRsp->modelview_matrix_stack_size;
@@ -4185,6 +4218,9 @@ void Interpreter::Init(class GfxWindowBackend* wapi, class GfxRenderingAPI* rapi
     mGameFb = mRapi->CreateFramebuffer();
     mGameFbMsaaResolved = mRapi->CreateFramebuffer();
 
+    // Poregon -- OpenVR create a 2nd framebuffer
+    mRapi->UpdateFramebufferParameters(mGameFb, width, height, 1, false, true, true, true);
+
     mNativeDimensions.width = SCREEN_WIDTH;
     mNativeDimensions.height = SCREEN_HEIGHT;
 
@@ -4236,6 +4272,156 @@ bool Interpreter::ViewportMatchesRendererResolution() {
     }
     return false;
 #endif
+}
+
+// Poregon -- OpenVR
+void convert_openvr_matrix_to_engine(const vr::HmdMatrix44_t& vrMatrix, float out[4][4]) {
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            out[row][col] = vrMatrix.m[col][row]; // Transpose to row-major
+        }
+    }
+}
+
+// Poregon -- OpenVR
+glm::mat4 convert_openvr_matrix34_to_glm(const vr::HmdMatrix34_t& mat) {
+    glm::mat4 result = glm::mat4(1.0f);
+    result[0][0] = mat.m[0][0];
+    result[1][0] = mat.m[0][1];
+    result[2][0] = mat.m[0][2];
+    result[3][0] = mat.m[0][3];
+    result[0][1] = mat.m[1][0];
+    result[1][1] = mat.m[1][1];
+    result[2][1] = mat.m[1][2];
+    result[3][1] = mat.m[1][3];
+    result[0][2] = mat.m[2][0];
+    result[1][2] = mat.m[2][1];
+    result[2][2] = mat.m[2][2];
+    result[3][2] = mat.m[2][3];
+    result[0][3] = 0.0f;
+    result[1][3] = 0.0f;
+    result[2][3] = 0.0f;
+    result[3][3] = 1.0f;
+    return result;
+}
+
+// Poregon -- OpenVR
+void Interpreter::vr_init() {
+    // initialize openvr
+    vr::EVRInitError eError = vr::VRInitError_None;
+    vr_system.system = vr::VR_Init(&eError, vr::VRApplication_Scene);
+
+    if (eError != vr::VRInitError_None) {
+        char error_msg[1024];
+        sprintf_s(error_msg, sizeof(error_msg), "Unable to init VR runtime: %s",
+                  vr::VR_GetVRInitErrorAsEnglishDescription(eError));
+        return;
+    }
+
+    vr_system.compositor = vr::VRCompositor();
+    vr_system.render_models = vr::VRRenderModels();
+
+    // Get recommended render target size
+    // vr_system.system->GetRecommendedRenderTargetSize(&vr_system.render_width, &vr_system.render_height);
+    // SPDLOG_INFO("initial Width = {}, Height = {}", vr_system.render_width, vr_system.render_height);
+
+    // william
+    //  Set near/far planes
+    float nearClip = 10.0f;
+    float farClip = 10000.0f;
+
+    // Fetch both eye-to-head transforms
+    vr_system.eye_positions[vr::Eye_Left] = vr_system.system->GetEyeToHeadTransform(vr::Eye_Left);
+    vr_system.eye_positions[vr::Eye_Right] = vr_system.system->GetEyeToHeadTransform(vr::Eye_Right);
+
+    // Fetch both projection matrices
+    convert_openvr_matrix_to_engine(vr_system.system->GetProjectionMatrix(vr::Eye_Left, nearClip, farClip),
+                                    vr_system.eye_projection_matrices_converted[vr::Eye_Left]);
+
+    convert_openvr_matrix_to_engine(vr_system.system->GetProjectionMatrix(vr::Eye_Right, nearClip, farClip),
+                                    vr_system.eye_projection_matrices_converted[vr::Eye_Right]);
+
+    vr::HmdMatrix44_t mat = vr_system.system->GetProjectionMatrix(vr::Eye_Left, nearClip, farClip);
+    spdlog::info("OpenVR Projection Matrix (Left Eye):");
+    for (int r = 0; r < 4; ++r) {
+        spdlog::info("{:.5f}  {:.5f}  {:.5f}  {:.5f}", mat.m[r][0], mat.m[r][1], mat.m[r][2], mat.m[r][3]);
+    }
+
+    vr_system.initialized = true;
+}
+
+// Poregon -- OpenVR
+void Interpreter::vr_get_poses() {
+    vr::VRCompositor()->WaitGetPoses(vr_system.tracked_device_poses, vr::k_unMaxTrackedDeviceCount, nullptr, 0);
+}
+
+// Poregon -- OpenVR
+void Interpreter::vr_update_view_matrix(int eye) {
+    vr_system.current_eye = eye;
+    if (vr_system.initialized) {
+        if (!vr_system.tracked_device_poses[vr::k_unTrackedDeviceIndex_Hmd].bPoseIsValid) {
+            fprintf(stderr, "[VR] HMD pose not valid! Skipping view matrix update.\n");
+            return;
+        }
+
+        const vr::HmdMatrix34_t& head_pose_raw =
+            vr_system.tracked_device_poses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking;
+        glm::mat4 head_pose = convert_openvr_matrix34_to_glm(head_pose_raw);
+        vr::HmdMatrix34_t raw_eye = vr_system.eye_positions[static_cast<vr::EVREye>(vr_system.current_eye)];
+        glm::mat4 eye_to_head = convert_openvr_matrix34_to_glm(raw_eye);
+
+        glm::mat4 eye_pose = head_pose * eye_to_head;
+
+        // Invert eye pose with tracking origin for final view matrix
+        glm::mat4 view = glm::inverse(eye_pose);
+
+        memcpy(vr_system.eye_view_matrices[static_cast<vr::EVREye>(vr_system.current_eye)], glm::value_ptr(view),
+               sizeof(float) * 16);
+    }
+}
+
+// Poregon -- OpenVR
+uintptr_t* Interpreter::GetVRTextureForEye(int fb_id) {
+
+    //ID3D11Texture2D* texture = reinterpret_cast<ID3D11Texture2D*>(mRapi->GetFramebufferTexturePtr(fb_id));
+    mGfxVrTexture = 0;
+    mGfxVrTexture = reinterpret_cast<uintptr_t*>(mRapi->GetFramebufferTexturePtr(fb_id));
+    //mGfxVrTexture = (uintptr_t)mRapi->GetFramebufferTexturePtr(fb_id);
+
+    if (!mGfxVrTexture) {
+        spdlog::error("Failed to retrieve Direct3D texture for eye {} with framebuffer ID {}", vr_system.current_eye,
+                      fb_id);
+    } else {
+        // spdlog::info("Got valid texture pointer for eye {}: {}", vr_system.current_eye,
+        //              static_cast<void*>(texture));
+    }
+
+    return mGfxVrTexture;
+}
+
+// Poregon -- OpenVR
+void Interpreter::vr_submit_framebuffers() {
+    for (int i = 0; i < 2; i++) {
+        // Eye eye = static_cast<Eye>(i);
+        //uintptr_t* tex = GetVRTextureForEye(i);
+        uintptr_t* tex = GetVRTextureForEye(i);
+
+        if (!tex) {
+            spdlog::warn("Skipping submission for eye {}: texture is null", i);
+            continue;
+        }
+
+        vr::Texture_t vrTex = { tex, vr::TextureType_DirectX, vr::ColorSpace_Gamma };
+        vr::EVREye vrEye = static_cast<vr::EVREye>(i);
+
+        vr::EVRCompositorError error = vr_system.compositor->Submit(vrEye, &vrTex);
+        if (error != vr::VRCompositorError_None) {
+            spdlog::error("OpenVR Submit failed for eye {}: error code {}", i, static_cast<int>(error));
+
+        } else {
+            // spdlog::info("Successfully submitted texture for eye {}", i);
+        }
+    }
 }
 
 void Interpreter::StartFrame() {
@@ -4292,6 +4478,12 @@ void Interpreter::StartFrame() {
 GfxExecStack g_exec_stack = {};
 
 void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_replacements) {
+    // Poregon -- OpenVR
+    int currentFramebuffer = 0;
+    if(vr_system.initialized){
+        currentFramebuffer = vr_system.current_eye;
+    }
+
     SpReset();
 
     mGetPixelDepthPending.clear();
@@ -4299,10 +4491,17 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
 
     mCurMtxReplacements = &mtx_replacements;
 
-    mRapi->UpdateFramebufferParameters(0, mGfxCurrentWindowDimensions.width, mGfxCurrentWindowDimensions.height, 1,
+    // Poregon -- OpenVR
+    //mRapi->UpdateFramebufferParameters(0, mGfxCurrentWindowDimensions.width, mGfxCurrentWindowDimensions.height, 1,
+    mRapi->UpdateFramebufferParameters(currentFramebuffer, mGfxCurrentWindowDimensions.width, mGfxCurrentWindowDimensions.height, 1,
                                        false, true, true, !mRendersToFb);
+    
     mRapi->StartFrame();
-    mRapi->StartDrawToFramebuffer(mRendersToFb ? mGameFb : 0, (float)mCurDimensions.height / mNativeDimensions.height);
+
+    // Poregon -- OpenVR
+    //mRapi->StartDrawToFramebuffer(mRendersToFb ? mGameFb : 0, (float)mCurDimensions.height / mNativeDimensions.height);
+    mRapi->StartDrawToFramebuffer(mRendersToFb ? mGameFb : currentFramebuffer, (float)mCurDimensions.height / mNativeDimensions.height);
+
     mRapi->ClearFramebuffer(false, true);
     mRdp->viewport_or_scissor_changed = true;
     mRenderingState.viewport = {};
@@ -4320,7 +4519,9 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
                 // soft locking the renderer
                 if (mFbActive) {
                     mFbActive = 0;
-                    mRapi->StartDrawToFramebuffer(mRendersToFb ? mGameFb : 0, 1);
+                    // Poregon -- OpenVR
+                    //mRapi->StartDrawToFramebuffer(mRendersToFb ? mGameFb : 0, 1);
+                    mRapi->StartDrawToFramebuffer(mRendersToFb ? mGameFb : currentFramebuffer, 1);
                 }
 
                 break;

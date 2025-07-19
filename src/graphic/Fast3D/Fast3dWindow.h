@@ -21,6 +21,14 @@ class Fast3dWindow : public Ship::Window {
     void Close() override;
     void StartFrame() override;
     void EndFrame() override;
+
+    // Poregon -- OpenVR Functions
+    void vr_init();
+    void vr_get_poses();
+    void vr_update_view_matrix(int eye);
+    void vr_submit_framebuffers();
+    //ID3D11Texture2D* GetVRTextureForEye(int fbId);
+
     bool IsFrameReady() override;
     void HandleEvents() override;
     void SetCursorVisibility(bool visible) override;

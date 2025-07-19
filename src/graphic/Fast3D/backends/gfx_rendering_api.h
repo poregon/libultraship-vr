@@ -1,4 +1,5 @@
-#pragma once
+#ifndef GFX_RENDERING_API_H
+#define GFX_RENDERING_API_H
 
 #include <stdint.h>
 
@@ -66,6 +67,7 @@ class GfxRenderingAPI {
     virtual std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff>
     GetPixelDepth(int fb_id, const std::set<std::pair<float, float>>& coordinates) = 0;
     virtual void* GetFramebufferTextureId(int fbId) = 0;
+    virtual void* GetFramebufferTexturePtr(int fbId) = 0;
     virtual void SelectTextureFb(int fbId) = 0;
     virtual void DeleteTexture(uint32_t texId) = 0;
     virtual void SetTextureFilter(FilteringMode mode) = 0;
@@ -83,3 +85,4 @@ class GfxRenderingAPI {
     bool mSrgbMode = false;
 };
 } // namespace Fast
+#endif

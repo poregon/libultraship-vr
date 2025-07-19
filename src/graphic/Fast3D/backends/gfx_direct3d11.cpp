@@ -862,6 +862,28 @@ void* GfxRenderingAPIDX11::GetFramebufferTextureId(int fb_id) {
     return (void*)mTextures[mFrameBuffers[fb_id].texture_id].resource_view.Get();
 }
 
+// Poregon -- OpenVR
+void* GfxRenderingAPIDX11::GetFramebufferTexturePtr(int fb_id) {
+    if (fb_id < 0 || fb_id >= static_cast<int>(mFrameBuffers.size())) {
+        SPDLOG_ERROR("Invalid framebuffer ID: {}", fb_id);
+        return nullptr;
+    }
+
+    const auto& fb = mFrameBuffers[fb_id];
+    if (fb.texture_id < 0 || fb.texture_id >= static_cast<int>(mTextures.size())) {
+        SPDLOG_ERROR("Invalid texture ID {} for framebuffer {}", fb.texture_id, fb_id);
+        return nullptr;
+    }
+
+    auto* tex = mTextures[fb.texture_id].texture.Get();
+
+    if (!tex) {
+        SPDLOG_ERROR("Texture pointer for framebuffer {} (tex id {}) is null", fb_id, fb.texture_id);
+    }
+
+    return (void*)tex;
+}
+
 void GfxRenderingAPIDX11::SelectTextureFb(int fbID) {
     int tile = 0;
     SelectTexture(tile, mFrameBuffers[fbID].texture_id);
@@ -994,10 +1016,6 @@ void GfxRenderingAPIDX11::ReadFramebufferToCPU(int fb_id, uint32_t width, uint32
             rgba16_buf[i + (j * width)] = (r << 11) | (g << 6) | (b << 1) | a;
         }
     }
-
-    // Cleanup
-    staging->Release();
-    staging = nullptr;
 
     delete[] temp;
 }

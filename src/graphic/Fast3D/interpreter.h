@@ -1,4 +1,5 @@
-#pragma once
+#ifndef GFX_PC_H
+#define GFX_PC_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -352,6 +353,7 @@ struct MaskedTextureEntry {
     uint8_t* replacementData;
 };
 
+
 class Interpreter {
   public:
     Interpreter();
@@ -368,6 +370,16 @@ class Interpreter {
     void HandleWindowEvents();
     bool IsFrameReady();
     bool ViewportMatchesRendererResolution();
+
+    // Poregon -- OpenVR Functions
+    void vr_init();
+    void vr_get_poses();
+    void vr_update_view_matrix(int eye);
+    void vr_submit_framebuffers();
+    //ID3D11Texture2D* GetVRTextureForEye(int fbId);
+    uintptr_t* GetVRTextureForEye(int fbId);
+    uintptr_t* mGfxVrTexture{};
+
     void SetTargetFPS(int fps);
     void SetMaxFrameLatency(int latency);
     int CreateFrameBuffer(uint32_t width, uint32_t height, uint32_t native_width, uint32_t native_height,
@@ -527,3 +539,5 @@ const char* GfxGetOpcodeName(int8_t opcode);
 extern "C" void gfx_texture_cache_clear();
 extern "C" int gfx_create_framebuffer(uint32_t width, uint32_t height, uint32_t native_width, uint32_t native_height,
                                       uint8_t resize);
+
+#endif
