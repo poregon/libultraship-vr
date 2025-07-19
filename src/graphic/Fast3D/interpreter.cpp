@@ -4328,7 +4328,7 @@ void Interpreter::vr_init() {
     // william
     //  Set near/far planes
     float nearClip = 10.0f;
-    float farClip = 10000.0f;
+    float farClip = 20000.0f;
 
     // Fetch both eye-to-head transforms
     vr_system.eye_positions[vr::Eye_Left] = vr_system.system->GetEyeToHeadTransform(vr::Eye_Left);
@@ -4374,6 +4374,18 @@ void Interpreter::vr_update_view_matrix(int eye) {
 
         // Invert eye pose with tracking origin for final view matrix
         glm::mat4 view = glm::inverse(eye_pose);
+
+        // Move the view matrix backwards along the z axis by 1 unit
+        view = glm::translate(view, glm::vec3(0.0f, 0.9f, -1.5f));
+
+        // Trying to move the camera back a bit for better kart fov
+        //glm::mat4 view = glm::inverse(eye_pose) * vec4(0.0, 0.0, -1.0, 0.0);
+        /*
+            m_mat4HMDPose = VRCompositor()->WaitGetPoses;
+            m_mat4HMDPose = inverse(m_mat4HMDPose);
+            vec4 direction = m_mat4HMDPose * vec4(0.0, 0.0, -1.0, 0.0);
+            model = translate(model, vec3(direction.x, direction.y, direction.z));
+        */
 
         memcpy(vr_system.eye_view_matrices[static_cast<vr::EVREye>(vr_system.current_eye)], glm::value_ptr(view),
                sizeof(float) * 16);

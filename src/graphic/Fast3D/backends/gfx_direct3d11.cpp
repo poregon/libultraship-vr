@@ -476,6 +476,71 @@ static D3D11_TEXTURE_ADDRESS_MODE gfx_cm_to_d3d11(uint32_t val) {
     return (val & G_TX_MIRROR) ? D3D11_TEXTURE_ADDRESS_MIRROR : D3D11_TEXTURE_ADDRESS_WRAP;
 }
 
+// Pseudocode plan:
+// 1. Add a new parameter to UploadTexture to optionally accept a depth buffer or flag for depth.
+// 2. When creating the texture, use a typeless or depth format if depth is requested.
+// 3. Create a shader resource view for depth if needed.
+// 4. Optionally, allow reading back depth from the texture.
+
+// Step 1: Modify UploadTexture to accept a depth flag
+/*
+void GfxRenderingAPIDX11::UploadTexture(const uint8_t* rgba32_buf, uint32_t width, uint32_t height, bool isDepth) {
+    TextureData* texture_data = &mTextures[mCurrentTextureIds[mCurrentTile]];
+    texture_data->width = width;
+    texture_data->height = height;
+
+    D3D11_TEXTURE2D_DESC texture_desc;
+    ZeroMemory(&texture_desc, sizeof(D3D11_TEXTURE2D_DESC));
+
+    texture_desc.Width = width;
+    texture_desc.Height = height;
+    texture_desc.Usage = D3D11_USAGE_IMMUTABLE;
+    texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    texture_desc.CPUAccessFlags = 0;
+    texture_desc.MiscFlags = 0;
+    texture_desc.ArraySize = 1;
+    texture_desc.MipLevels = 1;
+    texture_desc.SampleDesc.Count = 1;
+    texture_desc.SampleDesc.Quality = 0;
+
+    D3D11_SUBRESOURCE_DATA resource_data;
+    resource_data.pSysMem = rgba32_buf;
+    resource_data.SysMemPitch = width * (isDepth ? 4 : 4);
+    resource_data.SysMemSlicePitch = resource_data.SysMemPitch * height;
+
+    if (isDepth) {
+        // Use typeless format for depth+SRV
+        texture_desc.Format = DXGI_FORMAT_R32_TYPELESS;
+        texture_desc.BindFlags |= D3D11_BIND_DEPTH_STENCIL;
+        // Create the texture
+        ThrowIfFailed(
+            mDevice->CreateTexture2D(&texture_desc, &resource_data, texture_data->texture.ReleaseAndGetAddressOf()));
+        // Create SRV for depth
+        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+        srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Texture2D.MostDetailedMip = 0;
+        srvDesc.Texture2D.MipLevels = 1;
+        ThrowIfFailed(mDevice->CreateShaderResourceView(texture_data->texture.Get(), &srvDesc,
+                                                        texture_data->resource_view.ReleaseAndGetAddressOf()));
+        // Create DSV for depth
+        D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+        dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+        dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+        dsvDesc.Texture2D.MipSlice = 0;
+        ComPtr<ID3D11DepthStencilView> dsv;
+        ThrowIfFailed(mDevice->CreateDepthStencilView(texture_data->texture.Get(), &dsvDesc, dsv.GetAddressOf()));
+        // Optionally store dsv in TextureData if needed
+    } else {
+        texture_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        ThrowIfFailed(
+            mDevice->CreateTexture2D(&texture_desc, &resource_data, texture_data->texture.ReleaseAndGetAddressOf()));
+        ThrowIfFailed(mDevice->CreateShaderResourceView(texture_data->texture.Get(), nullptr,
+                                                        texture_data->resource_view.ReleaseAndGetAddressOf()));
+    }
+}
+*/
+
 void GfxRenderingAPIDX11::UploadTexture(const uint8_t* rgba32_buf, uint32_t width, uint32_t height) {
     // Create texture
 
@@ -542,6 +607,10 @@ void GfxRenderingAPIDX11::SetDepthTestAndMask(bool depth_test, bool depth_mask) 
 }
 
 void GfxRenderingAPIDX11::SetZmodeDecal(bool zmode_decal) {
+
+    // Poregon -- Attempt to stop overlays
+    //zmode_decal = false;
+
     mCurrentZmodeDecal = zmode_decal;
 }
 
